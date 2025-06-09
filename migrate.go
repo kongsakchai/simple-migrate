@@ -32,21 +32,50 @@ func New(db *sql.DB, path string, tableName ...string) *migrate {
 	}
 }
 
-func (m *migrate) Up() error {
+func (m *migrate) SetVersion(version string) error {
+	if version == "" {
+		return fmt.Errorf("version cannot be empty")
+	}
+
 	if err := m.initializeTable(); err != nil {
 		return fmt.Errorf("failed to initialize migration table %s: %w", m.tableName, err)
 	}
+	current, err := m.Version()
+	if err != nil {
+		return fmt.Errorf("failed to get current migration version: %w", err)
+	}
+
+	if current < version {
+		return m.upToVersion(version)
+	} else if current > version {
+		return m.downToVersion(version)
+	}
+
+	slog.Info("migration already at specified version", "version", version)
+	return nil
+}
+
+func (m *migrate) Up() error {
+	return m.upToVersion()
+}
+
+func (m *migrate) upToVersion(v ...string) error {
 	files, err := findMigrationFiles(m.path, SuffixUp, false)
 	if err != nil {
 		return fmt.Errorf("failed to find migration files: %w", err)
 	}
+
+	if err := m.initializeTable(); err != nil {
+		return fmt.Errorf("failed to initialize migration table %s: %w", m.tableName, err)
+	}
 	current, err := m.Version()
 	if err != nil {
 		return fmt.Errorf("failed to get current migration version: %w", err)
 	}
+
 	for _, file := range files {
-		version := strings.Split(file, "_")[0]
-		if strings.Compare(version, current) <= 0 {
+		fVersion := strings.Split(file, "_")[0]
+		if fVersion <= current {
 			continue
 		}
 
@@ -59,28 +88,49 @@ func (m *migrate) Up() error {
 			return fmt.Errorf("failed to execute migration %s: %w", file, err)
 		}
 
-		if err := m.addMigration(version); err != nil {
-			return fmt.Errorf("failed to add migration version %s: %w", version, err)
+		if err := m.addMigration(fVersion); err != nil {
+			return fmt.Errorf("failed to add migration version %s: %w", fVersion, err)
 		}
+
+		if len(v) > 0 && fVersion == v[0] {
+			slog.Info("migration up to specified version", "version", fVersion)
+			return nil
+		}
+
+		current = fVersion
 	}
 
-	slog.Info("migration up to date", "version", current)
+	slog.Info("migration up to latest version", "version", current)
 	return nil
 }
 
 func (m *migrate) Down() error {
+	return m.downToVersion()
+}
+
+func (m *migrate) downToVersion(v ...string) error {
 	files, err := findMigrationFiles(m.path, SuffixDown, true)
 	if err != nil {
 		return fmt.Errorf("failed to find migration files: %w", err)
+	}
+
+	if err := m.initializeTable(); err != nil {
+		return fmt.Errorf("failed to initialize migration table %s: %w", m.tableName, err)
 	}
 	current, err := m.Version()
 	if err != nil {
 		return fmt.Errorf("failed to get current migration version: %w", err)
 	}
+
 	for _, file := range files {
-		version := strings.Split(file, "_")[0]
-		if strings.Compare(version, current) > 0 {
+		fVersion := strings.Split(file, "_")[0]
+		if fVersion > current {
 			continue
+		}
+
+		if len(v) > 0 && fVersion == v[0] {
+			slog.Info("migration down to specified version", "version", fVersion)
+			return nil
 		}
 
 		query, err := readMigrationFile(m.path, file)
@@ -92,10 +142,12 @@ func (m *migrate) Down() error {
 			return fmt.Errorf("failed to execute migration %s: %w", file, err)
 		}
 
-		if err := m.removeMigration(version); err != nil {
-			return fmt.Errorf("failed to remove migration version %s: %w", version, err)
+		if err := m.removeMigration(fVersion); err != nil {
+			return fmt.Errorf("failed to remove migration version %s: %w", fVersion, err)
 		}
 	}
+
+	slog.Info("migration donw successfully")
 	return nil
 }
 
