@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"bytes"
 	"database/sql"
 	"fmt"
 	"log/slog"
@@ -84,7 +85,7 @@ func (m *migrate) upToVersion(v ...string) error {
 			return fmt.Errorf("failed to read migration file %s: %w", file, err)
 		}
 
-		if _, err := m.db.Exec(string(query)); err != nil {
+		if err := m.execMigration(query); err != nil {
 			return fmt.Errorf("failed to execute migration %s: %w", file, err)
 		}
 
@@ -138,7 +139,7 @@ func (m *migrate) downToVersion(v ...string) error {
 			return fmt.Errorf("failed to read migration file %s: %w", file, err)
 		}
 
-		if _, err := m.db.Exec(string(query)); err != nil {
+		if err := m.execMigration(query); err != nil {
 			return fmt.Errorf("failed to execute migration %s: %w", file, err)
 		}
 
@@ -168,6 +169,45 @@ func (m *migrate) initializeTable() error {
 		return err
 	}
 	return nil
+}
+
+func (m *migrate) execMigration(query []byte) (err error) {
+	tx, err := m.db.Begin()
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if err != nil {
+			if rbErr := tx.Rollback(); rbErr != nil {
+				err = fmt.Errorf("rollback failed: %v, original error: %w", rbErr, err)
+			}
+		} else {
+			if cmErr := tx.Commit(); cmErr != nil {
+				err = fmt.Errorf("commit failed: %v", cmErr)
+				return
+			}
+		}
+	}()
+
+	for {
+		index := bytes.Index(query, []byte(";"))
+		if index == -1 {
+			break
+		}
+
+		stmt := query[:index+1]
+		query = query[index+1:]
+		if len(strings.TrimSpace(string(stmt))) == 0 {
+			continue
+		}
+
+		if _, err := tx.Exec(string(stmt)); err != nil {
+			return err
+		}
+	}
+
+	return err
 }
 
 func (m *migrate) addMigration(version string) error {
