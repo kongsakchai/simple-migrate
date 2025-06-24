@@ -171,24 +171,21 @@ func (m *migrate) initializeTable() error {
 	return nil
 }
 
-func (m *migrate) execMigration(query []byte) (err error) {
+func (m *migrate) execMigration(query []byte) (errResp error) {
 	tx, err := m.db.Begin()
 	if err != nil {
-		return err
+		return errResp
 	}
 
 	defer func() {
-		if err != nil {
-			if rbErr := tx.Rollback(); rbErr != nil {
-				err = fmt.Errorf("rollback failed: %v, original error: %w", rbErr, err)
-			}
-			err = fmt.Errorf("migration execution failed: %w", err)
-		} else {
-			if cmErr := tx.Commit(); cmErr != nil {
-				err = fmt.Errorf("commit failed: %v", cmErr)
-				return
-			}
+		if errResp == nil {
+			return
 		}
+		if err := tx.Rollback(); err != nil {
+			errResp = fmt.Errorf("rollback failed: %v, original error: %w", err, errResp)
+			return
+		}
+		errResp = fmt.Errorf("migration execution failed: %w", errResp)
 	}()
 
 	for {
@@ -208,7 +205,11 @@ func (m *migrate) execMigration(query []byte) (err error) {
 		}
 	}
 
-	return err
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	return errResp
 }
 
 func (m *migrate) addMigration(version string) error {
