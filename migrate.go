@@ -182,6 +182,7 @@ func (m *migrate) execMigration(query []byte) (err error) {
 			if rbErr := tx.Rollback(); rbErr != nil {
 				err = fmt.Errorf("rollback failed: %v, original error: %w", rbErr, err)
 			}
+			err = fmt.Errorf("migration execution failed: %w", err)
 		} else {
 			if cmErr := tx.Commit(); cmErr != nil {
 				err = fmt.Errorf("commit failed: %v", cmErr)
