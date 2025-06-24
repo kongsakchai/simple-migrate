@@ -185,7 +185,6 @@ func (m *migrate) execMigration(query []byte) (errResp error) {
 			errResp = fmt.Errorf("rollback failed: %v, original error: %w", err, errResp)
 			return
 		}
-		errResp = fmt.Errorf("migration execution failed: %w", errResp)
 	}()
 
 	for {
